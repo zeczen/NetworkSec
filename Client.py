@@ -1,4 +1,4 @@
-#!/usr/bin/sudo python
+import sys
 from random import randint
 from threading import Thread
 from time import sleep
@@ -18,8 +18,8 @@ ACK = 5
 TIMEOUT = 0.5
 
 
-class Client():
-# class Client(Thread):
+# class Client():
+class Client(Thread):
     iface = conf.iface  # default interface
     target = conf.route.route("0.0.0.0")[2]  # default DHCP server
     mac_dst = None
@@ -27,7 +27,8 @@ class Client():
     persist = False
 
     def __init__(self):
-        # Thread.__init__(self)  # generate random mac address
+        Thread.__init__(self)
+        # generate random mac address
         self.ch_mac = mac2str(RandMAC())
         self.mac = str2mac(self.ch_mac)
         self.transaction_id = randint(0, 0xffffffff)
@@ -82,24 +83,31 @@ class Client():
             BOOTP in p and
             UDP in p and
             p[UDP].sport == 67 and  # the packet is from server (OFFER or ACK)
-            p[BOOTP].xid in self.transaction_id and  # the packet is for a client we created
+            p[BOOTP].xid == self.transaction_id and  # the packet is for the current client
             p.options[0][1] == op,
         )
 
-        if not packets:  # if timeout occurs
-            if not Client.persist:  # we terminate the program when the server is down
-                exit()
-            if not Client.lock.locked():  # if the lock is still open
-                Client.lock.acquire()  # stop create clients, probably DHCP server is down
-                sleep(TIMEOUT * 5)  # try again
+        if len(packets) == 0:  # if timeout occurs
+            if not Client.persist:
+                # if not persistent the program terminated when the server is down
+                sys.exit()
+            if Client.lock.acquire(blocking=True, timeout=TIMEOUT):
+                # stop create clients, DHCP server is down
+                print('========= LOCK Locked =========')
+                sleep(TIMEOUT * 5)  # try again after TIMEOUT * 5 seconds
                 Client.lock.release()
-        return packets[0]
+                print('========= LOCK Release =========')
+            print(f'Lock: {Client.lock.locked()}')
+            return False
+
+        else:
+            return packets[0]
 
     def discover(self):
-        print(f'D: {self.transaction_id}')
+        print(f'D: 0x{self.transaction_id:08x}')
         packet = Ether(
             src=self.mac,
-            dst=Client.mac_dst
+            dst='ff:ff:ff:ff:ff'
         ) / IP(
             src='0.0.0.0', dst='255.255.255.255'
         ) / UDP(
@@ -113,7 +121,7 @@ class Client():
         sendp(packet, iface=Client.iface, verbose=0)
 
     def request(self):
-        print(f'R: {self.transaction_id}')
+        print(f'R: 0x{self.transaction_id:08x}')
         packet = Ether(
             src=self.mac,
             dst=Client.mac_dst

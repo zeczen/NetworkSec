@@ -1,6 +1,7 @@
 import argparse
 import threading
 
+from time import sleep
 from scapy.config import conf
 from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.layers.inet import IP, UDP, ICMP
@@ -44,12 +45,13 @@ def main():
 
     Client.mac_dst = get_mac(Client.target)
 
+    Client.persist = args.persistent
+
     Client.lock = threading.Lock()
-    # if args.persistent:
 
     while True:
-        Client.lock.acquire()
-        Client().run()
+        Client.lock.acquire(blocking=True)
+        Client().start()
         Client.lock.release()
 
 
