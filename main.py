@@ -24,18 +24,6 @@ args = parser.parse_args()
 mac_addr = mac2str(Ether().src)
 
 
-def get_mac(ip_addr):
-    """
-    It sends an ARP request to the IP address you specify, and returns the MAC address of the device that responds
-
-    :param ip_addr: The IP address of the target machine
-    :return: The MAC address of the IP address.
-    """
-    packet = Ether(dst='ff:ff:ff:ff:ff:ff') / ARP(pdst=ip_addr, op=1)
-    ans = srp1(packet, verbose=0)
-    return ans[Ether].src
-
-
 def main():
     # if no interface is specified, use the default interface
     Client.iface = args.iface if args.iface else conf.iface
@@ -43,7 +31,10 @@ def main():
     # if no target is specified, use the default gateway
     Client.target = args.target if args.target else conf.route.route("0.0.0.0")[2]
 
-    Client.mac_dst = get_mac(Client.target)
+    # get mac address of target
+    packet = Ether(dst='ff:ff:ff:ff:ff:ff') / ARP(pdst=Client.target, op=1)
+    ans = srp1(packet, iface=Client.iface, verbose=0)
+    Client.target_mac = ans[Ether].src
 
     Client.persist = args.persistent
 

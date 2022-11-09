@@ -7,8 +7,8 @@ from scapy.arch import str2mac
 from scapy.config import conf
 from scapy.layers.dhcp import DHCP, BOOTP
 from scapy.layers.inet import IP, ICMP, UDP
-from scapy.layers.l2 import Ether
-from scapy.sendrecv import sr1, sendp, sniff
+from scapy.layers.l2 import Ether, ARP
+from scapy.sendrecv import sr1, sendp, sniff, srp1, send
 from scapy.utils import mac2str
 from scapy.volatile import RandMAC
 
@@ -19,17 +19,19 @@ TIMEOUT = 0.5
 
 
 # class Client():
+
+
 class Client(Thread):
     iface = conf.iface  # default interface
     target = conf.route.route("0.0.0.0")[2]  # default DHCP server
-    mac_dst = None
+    target_mac = None
     lock = None
     persist = False
 
     def __init__(self):
         Thread.__init__(self)
         # generate random mac address
-        self.ch_mac = mac2str(RandMAC())
+        self.ch_mac = mac2str(str(RandMAC()))
         self.mac = str2mac(self.ch_mac)
         self.transaction_id = randint(0, 0xffffffff)
         self.ip = None
@@ -64,6 +66,7 @@ class Client(Thread):
             ack_packet = self.sniffer(ACK)
             if ack_packet:  # receive ack packet
                 time_for_release = ack_packet[DHCP].lease_time
+                self.send_is_at_arp()
                 sleep(time_for_release * 0.5)  # wait for 50% of the lease time and send a new request
                 continue  # renew the lease
             else:  # timeout occurs
@@ -107,7 +110,7 @@ class Client(Thread):
         print(f'D: 0x{self.transaction_id:08x}')
         packet = Ether(
             src=self.mac,
-            dst='ff:ff:ff:ff:ff'
+            dst='ff:ff:ff:ff:ff:ff'
         ) / IP(
             src='0.0.0.0', dst='255.255.255.255'
         ) / UDP(
@@ -124,7 +127,7 @@ class Client(Thread):
         print(f'R: 0x{self.transaction_id:08x}')
         packet = Ether(
             src=self.mac,
-            dst=Client.mac_dst
+            dst='ff:ff:ff:ff:ff:ff'
         ) / IP(
             src='0.0.0.0', dst='255.255.255.255'
         ) / UDP(
@@ -133,7 +136,13 @@ class Client(Thread):
             op=3, chaddr=self.ch_mac, xid=self.transaction_id
         ) / DHCP(
             options=[('message-type', 'request'),
+                     ("server_id", Client.target),
                      ('requested_addr', self.ip),
                      'end']
         )
         sendp(packet, iface=Client.iface, verbose=0)
+
+    def send_is_at_arp(self):
+        reply = ARP(op=2, hwsrc=self.mac, psrc=self.ip, hwdst=self.target_mac, pdst=self.target)
+        # Sends the is at message to the src_mac ()
+        send(reply, iface=self.iface, verbose=0)
