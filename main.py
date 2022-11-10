@@ -1,4 +1,5 @@
 import argparse
+import random
 import threading
 
 from time import sleep
@@ -45,7 +46,9 @@ def main():
         Client().start()
         Client.lock.release()
 
+        sleep(random.random() * 0.1)
+
+
 
 if __name__ == '__main__':
-    # exit()
     main()

