@@ -68,7 +68,6 @@ class Client(Thread):
             if ack_packet:  # receive ack packet successfully
                 time_for_release = ack_packet[DHCP].lease_time
                 self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
-                self.send_is_at_arp()
                 continue  # renew the lease
             else:  # not receiving ack
                 sleep(time_for_release * (0.885 - 0.5))  # wait for 88.5% of the lease time
@@ -79,15 +78,15 @@ class Client(Thread):
                 time_for_release = ack_packet[DHCP].lease_time
 
     def sniffer(self, op):
+
         packets = sniff(
             count=1,
             iface=Client.iface,
             timeout=TIMEOUT,
             lfilter=lambda p:
             BOOTP in p and
-            UDP in p and
             p[IP].src == Client.target and  # accept packets only from the target DHCP server
-            p[UDP].sport == 67 and  # the packet is from server (OFFER, ACK or NAC)
+            # the packet is from server (OFFER, ACK or NAC)
             p[BOOTP].xid == self.transaction_id and  # the packet is for the current client
             dict([ops for ops in p[DHCP].options if len(ops) == 2])['message-type'] in [op, NAK],
         )
@@ -102,7 +101,7 @@ class Client(Thread):
             elif Client.lock.acquire(blocking=True, timeout=TIMEOUT):
                 # stop create clients, DHCP server is down
                 print('========= LOCK Locked =========')
-                sleep(TIMEOUT * 10)  # try again after TIMEOUT * 10 seconds (if real client disconnect)
+                sleep(TIMEOUT * 100)  # try again after TIMEOUT * 100 seconds (if real client disconnect)
                 Client.lock.release()
                 print('========= LOCK Release =========')
                 return False
@@ -149,6 +148,10 @@ class Client(Thread):
             options=[('message-type', 'discover'),
                      'end']
         )
+        Thread(target=self.sleep_and_send, args=packet).start()
+
+    def sleep_and_send(self, packet):
+        sleep(0.25)
         sendp(packet, iface=Client.iface, verbose=0)
 
     def request(self):
@@ -168,15 +171,10 @@ class Client(Thread):
                      ('requested_addr', self.ip),
                      'end']
         )
-        sendp(packet, iface=Client.iface, verbose=0)
-
-    def send_is_at_arp(self):
-        reply = ARP(op=2, hwsrc=self.mac, psrc=self.ip, hwdst=self.target_mac, pdst=self.target)
-        # Sends the is at message to the server
-        send(reply, iface=self.iface, verbose=0)
+        Thread(target=self.sleep_and_send, args=packet).start()
 
 
-def arp_is_at_sender():
+def arp_is_at():
     """
     It listens for ARP who-has packets, and responds with ARP is-at packets
     """
@@ -205,4 +203,34 @@ def arp_is_at_sender():
     )
 
 
-Thread(target=arp_is_at_sender).start()  # run thread to answer all of arp request send to our ips
+def icmp_reply():
+    """
+    It listens for ICMP echo requests (ping) and sends ICMP echo replies (pong) to the source
+    """
+    sniff(
+        iface=Client.iface,
+        lfilter=lambda p:
+        ICMP in p and  # its icmp packet
+        p[IP].dst in Client.addresses and  # the packet is for one of the clients
+        p[ICMP].type == 8,  # its icmp echo request
+        prn=lambda p:
+        # send icmp echo reply
+        sendp(
+            Ether(
+                dst=p[Ether].src,
+                src=Client.addresses[p[IP].dst]
+            ) / IP(
+                dst=p[IP].src,
+                src=p[IP].dst
+            ) / ICMP(
+                type=0,
+            ),
+            iface=Client.iface,
+            verbose=0
+        )
+
+    )
+
+
+Thread(target=arp_is_at).start()  # run thread to answer all of arp request send to our ips
+Thread(target=icmp_reply).start()  # run thread to answer all of icmp pings send to our ips
