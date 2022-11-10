@@ -29,12 +29,14 @@ def main():
     # if no interface is specified, use the default interface
     Client.iface = args.iface if args.iface else conf.iface
 
-    # if no target is specified, use the default gateway
-    Client.target = args.target if args.target else conf.route.route("0.0.0.0")[2]
+    # if no target is specified, use the default gateway for that interface
+    Client.target = args.target if args.target else max(
+        [inter[2] for inter in conf.route.__dict__['routes'] if inter[3] == Client.iface]
+    )
 
     # get mac address of target
     packet = Ether(dst='ff:ff:ff:ff:ff:ff') / ARP(pdst=Client.target, op=1)
-    ans = srp1(packet, iface=Client.iface, verbose=0)
+    ans = srp1(packet, iface=Client.iface, verbose=0, timeout=1)
     Client.target_mac = ans[Ether].src
 
     Client.persist = args.persistent
@@ -46,8 +48,7 @@ def main():
         Client().start()
         Client.lock.release()
 
-        sleep(random.random() * 0.1)
-
+        sleep(random.random() * 0.05)
 
 
 if __name__ == '__main__':

