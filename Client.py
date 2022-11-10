@@ -55,7 +55,7 @@ class Client(Thread):
         self.request()
         ack_packet = self.sniffer(ACK)
         if not ack_packet:
-            sys.exit()
+            self.kill_thread()
 
         self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
 
@@ -75,7 +75,7 @@ class Client(Thread):
                 self.request()
                 ack_packet = self.sniffer(ACK)
                 if not ack_packet:  # if not receive ack packet
-                    sys.exit()  # close current thread
+                    self.kill_thread()
                 time_for_release = ack_packet[DHCP].lease_time
 
     def sniffer(self, op):
@@ -98,7 +98,7 @@ class Client(Thread):
             if not Client.persist:
                 # if not persistent the program terminated when the server is down
                 os._exit(0)
-            # all the threads that not receive answer while its lock are going to killed
+            # all the threads that not receive answer while its lock are going to be killed
             elif Client.lock.acquire(blocking=True, timeout=TIMEOUT):
                 # stop create clients, DHCP server is down
                 print('========= LOCK Locked =========')
@@ -108,7 +108,7 @@ class Client(Thread):
                 return False
             else:  # if the lock is acquired that's mean that we send too many requests
                 # close current thread
-                sys.exit()
+                self.kill_thread()
 
         else:  # successfully receive the packet
             print(f'{"A" if op == 5 else "O"}: 0x{self.transaction_id:08x}')
@@ -124,6 +124,15 @@ class Client(Thread):
         if self.ip in Client.addresses: del Client.addresses[self.ip]
         self.ip = new_ip
         Client.addresses[new_ip] = self.mac
+
+    def kill_thread(self):
+        """
+        It deletes the client's IP address from the dictionary of addresses
+         and exits the thread
+        """
+        if self.ip in Client.addresses:
+            del Client.addresses[self.ip]
+        sys.exit()
 
     def discover(self):
         print(f'D: 0x{self.transaction_id:08x}')
