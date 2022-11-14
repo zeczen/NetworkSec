@@ -15,7 +15,7 @@ from scapy.volatile import RandMAC
 OFFER = 2
 ACK = 5
 
-TIMEOUT = 2
+TIMEOUT = 5
 
 
 class Client(Thread):
