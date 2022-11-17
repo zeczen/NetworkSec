@@ -54,16 +54,15 @@ class Client(Thread):
         if not ack_packet:
             self.kill_client()
 
-        self.replace_ip(offer_packet[BOOTP].yiaddr)  # update the ip address
-
         # every loop we renew the same ip address
         while True:  # renew the lease infinite times
+            time_for_release = dict([ops for ops in ack_packet[DHCP].options if len(ops) == 2])['lease_time']
+            self.replace_ip(ack_packet[BOOTP].yiaddr)  # update the ip address
+
             sleep(time_for_release * 0.5)  # wait for 50% of the lease time
             self.request()
             ack_packet = self.sniffer(ACK)
             if ack_packet:  # receive ack packet successfully
-                time_for_release = dict([ops for ops in ack_packet[DHCP].options if len(ops) == 2])['lease_time']
-                self.replace_ip(offer_packet[BOOTP].yiaddr)  # update the ip address
                 continue  # renew the lease
             else:  # not receiving ack
                 sleep(time_for_release * (0.885 - 0.5))  # wait for 88.5% of the lease time
@@ -71,8 +70,6 @@ class Client(Thread):
                 ack_packet = self.sniffer(ACK)
                 if not ack_packet:  # if not receive ack packet
                     self.kill_client()
-                time_for_release = dict([ops for ops in ack_packet[DHCP].options if len(ops) == 2])['lease_time']
-                self.replace_ip(offer_packet[BOOTP].yiaddr)  # update the ip address
 
     def sniffer(self, op):
         packets = sniff(
