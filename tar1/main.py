@@ -1,4 +1,5 @@
-# eyal & inon
+# Eyal Seckbach & Ynon Sivilia
+
 import argparse
 import random
 import threading
@@ -79,9 +80,6 @@ def icmp_reply():
 
 
 def main():
-    threading.Thread(target=arp_is_at).start()  # run thread to answer all of arp request send to our ips
-    threading.Thread(target=icmp_reply).start()  # run thread to answer all of icmp pings send to our ips
-
     # if no interface is specified, use the default interface
     Client.iface = args.iface if args.iface else conf.iface
 
@@ -91,6 +89,9 @@ def main():
     )
 
     Client.persist = args.persistent
+
+    threading.Thread(target=arp_is_at).start()  # run thread to answer all of arp request send to our ips
+    threading.Thread(target=icmp_reply).start()  # run thread to answer all of icmp pings send to our ips
 
     Client.lock = threading.Lock()
 
