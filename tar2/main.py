@@ -70,15 +70,18 @@ def main():
 
     try:
         while True:
+            print(f'Sending ARP spoof to {target_ip}...')
             arp_spoof(target_ip, src, target_mac)
 
             # if gw argument is set, full duplex attack
             if args.gw:
+                print(f'Sending ARP spoof to {src}...')
                 arp_spoof(src, target_ip, src_mac)
 
             sleep(args.delay)  # wait
 
     except KeyboardInterrupt:
+        print('Restoring ARP tables...')
         arp_restore(target_ip, src, target_mac, src_mac)
         arp_restore(src, target_ip, src_mac, target_mac)
 
