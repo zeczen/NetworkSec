@@ -7,6 +7,8 @@ from struct import unpack
 from threading import Thread
 from time import sleep
 
+import netifaces
+import scapy
 from scapy.arch import get_if_addr
 from scapy.config import conf
 from scapy.layers.l2 import ARP, Ether
@@ -107,38 +109,10 @@ def ip_scanning(network_specification):
 
 
 def get_network_specification():
-    """
-    Generate the network ip including the mask using the command line
-
-    :return: [network ip]/[network mask]
-    :rtype: str
-    """
-
-    ip = get_if_addr(conf.iface)  # the current host ip
-    try:
-        # for linux
-        with subprocess.Popen('ifconfig', stdout=subprocess.PIPE) as proc:
-            for _ in range(30):
-                line = proc.stdout.readline()
-                if ip.encode() in line:
-                    mask = list(filter(lambda x: x != b'',
-                                       line.rstrip().split(b'netmask')[1].split(b' '))
-                                )[0].decode()
-                    break
-            proc.kill()
-
-    except FileNotFoundError:
-        # for windows
-        with subprocess.Popen('ipconfig', stdout=subprocess.PIPE) as proc:
-            for _ in range(30):
-                line = proc.stdout.readline()
-                if ip.encode() in line:
-                    break
-            mask = proc.stdout.readline().rstrip().split(b':')[-1].replace(b' ', b'').decode()
-            proc.kill()
-
-    network = str(ipaddress.IPv4Network(f'{ip}/{mask}', False))
-    return network
+    netmask = netifaces.ifaddresses('{' +
+                                    str(scapy.interfaces.get_working_if()).split('{')[1].split('}')[0] +
+                                    '}')[2][0]['netmask']
+    return netmask
 
 
 def scan():
