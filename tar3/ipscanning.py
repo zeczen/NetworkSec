@@ -150,7 +150,3 @@ def scan():
 
     ip_scanning(specification)
     return hosts
-
-
-if __name__ == "__main__":
-    main()
