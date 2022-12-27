@@ -66,7 +66,7 @@ def main(interface_name, target, src_ip, d):
         while True:
             print(f'Sending ARP spoof to {target_ip}...')
             arp_spoof(target_ip, src, target_mac)
-            sleep(args.delay)  # wait
+            sleep(delay)  # wait
 
     except KeyboardInterrupt:
         print('Restoring ARP tables...')
